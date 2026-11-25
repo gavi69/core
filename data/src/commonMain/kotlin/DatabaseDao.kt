@@ -1325,7 +1325,7 @@ interface DatabaseDao {
         "SELECT \n" +
             "  videoId,\n" +
             "  COUNT(*) AS playCount,\n" +
-            "  SUM(CASE WHEN listenedSecond >= durationSecond THEN 1 ELSE 0 END) AS completedPlayCount,\n" +
+            "  SUM(CASE WHEN durationSecond > 0 AND listenedSecond >= durationSecond THEN 1 ELSE 0 END) AS completedPlayCount,\n" +
             "  SUM(listenedSecond) AS totalListeningTime\n" +
             "FROM playback_event\n" +
             "WHERE timestamp BETWEEN :startTimestamp AND :endTimestamp\n" +
@@ -1358,7 +1358,7 @@ interface DatabaseDao {
      * duet counts as time with both and the column deliberately does not sum to the period total.
      */
     @Query(
-        "SELECT ea.channelId, COUNT(*) AS playCount, SUM(CASE WHEN pe.listenedSecond >= pe.durationSecond THEN 1 ELSE 0 END) AS completedPlayCount, SUM(pe.listenedSecond) AS totalListeningTime" +
+        "SELECT ea.channelId, COUNT(*) AS playCount, SUM(CASE WHEN pe.durationSecond > 0 AND pe.listenedSecond >= pe.durationSecond THEN 1 ELSE 0 END) AS completedPlayCount, SUM(pe.listenedSecond) AS totalListeningTime" +
             " FROM event_artist ea JOIN playback_event pe ON pe.eventId = ea.eventId" +
             " WHERE ea.timestamp BETWEEN :startTimestamp AND :endTimestamp" +
             " GROUP BY ea.channelId" + " ORDER BY playCount DESC" +
