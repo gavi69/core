@@ -1393,6 +1393,7 @@ internal class MediaServiceHandlerImpl(
     }
 
     override fun loadMore() {
+        if (queueData.value.queueState == QueueData.StateSource.STATE_INITIALIZING) return
         val currentData = queueData.value.data
         if (
             !RadioQueueTrim.appliesTo(currentData.playlistType, currentData.playlistId) &&
@@ -1406,7 +1407,6 @@ internal class MediaServiceHandlerImpl(
             }
             return
         }
-        if (queueData.value.queueState == QueueData.StateSource.STATE_INITIALIZING) return
         // Separate local and remote data
         // Local Add Prefix to PlaylistID to differentiate between local and remote
         // Local: LC-PlaylistID
