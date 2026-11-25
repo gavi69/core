@@ -17,5 +17,6 @@ import androidx.room.ColumnInfo
 data class TopPlayedArtistTime(
     @ColumnInfo(name = "channelId") val channelId: String,
     @ColumnInfo(name = "playCount") val playCount: Int,
+    @ColumnInfo(name = "completedPlayCount") val completedPlayCount: Int,
     @ColumnInfo(name = "totalListeningTime") val totalListeningTime: Long,
 )
