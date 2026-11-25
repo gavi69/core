@@ -115,6 +115,9 @@ import kotlin.math.pow
 
 private val TAG = "Media3ServiceHandlerImpl"
 
+/** Finite user-selected queues are capped to keep large playlists responsive. */
+private const val MAX_FINITE_QUEUE_TRACKS = 500
+
 internal class MediaServiceHandlerImpl(
     private val dataStoreManager: DataStoreManager,
     private val songRepository: SongRepository,
@@ -1390,6 +1393,19 @@ internal class MediaServiceHandlerImpl(
     }
 
     override fun loadMore() {
+        val currentData = queueData.value.data
+        if (
+            !RadioQueueTrim.appliesTo(currentData.playlistType, currentData.playlistId) &&
+            currentData.listTracks.size >= MAX_FINITE_QUEUE_TRACKS
+        ) {
+            _queueData.update {
+                it.copy(
+                    queueState = QueueData.StateSource.STATE_INITIALIZED,
+                    data = it.data.copy(continuation = null),
+                )
+            }
+            return
+        }
         if (queueData.value.queueState == QueueData.StateSource.STATE_INITIALIZING) return
         // Separate local and remote data
         // Local Add Prefix to PlaylistID to differentiate between local and remote
@@ -1788,15 +1804,34 @@ internal class MediaServiceHandlerImpl(
         listTrack: ArrayList<Track>,
         isAddToQueue: Boolean,
     ) {
-        Logger.d("Queue", listTrack.map { it.title }.toString())
+        val currentData = _queueData.value.data
+        val canGrowUnbounded =
+            RadioQueueTrim.appliesTo(currentData.playlistType, currentData.playlistId)
+        val remainingCapacity =
+            if (canGrowUnbounded) {
+                listTrack.size
+            } else {
+                (MAX_FINITE_QUEUE_TRACKS - currentData.listTracks.size).coerceAtLeast(0)
+            }
+        val tracksToLoad = listTrack.take(remainingCapacity)
+        if (tracksToLoad.isEmpty()) {
+            _queueData.update {
+                it.copy(
+                    queueState = QueueData.StateSource.STATE_INITIALIZED,
+                    data = it.data.copy(continuation = null),
+                )
+            }
+            return
+        }
+        Logger.d("Queue", tracksToLoad.map { it.title }.toString())
         _queueData.update {
             it.copy(
                 queueState = QueueData.StateSource.STATE_INITIALIZING,
             )
         }
         val catalogMetadata: ArrayList<Track> = arrayListOf()
-        for (i in 0 until listTrack.size) {
-            val track = listTrack[i]
+        for (i in 0 until tracksToLoad.size) {
+            val track = tracksToLoad[i]
             var thumbUrl =
                 track.thumbnails?.lastOrNull()?.url
                     ?: "http://i.ytimg.com/vi/${track.videoId}/maxresdefault.jpg"
@@ -1922,7 +1957,14 @@ internal class MediaServiceHandlerImpl(
             )
         }
         val tempQueue: ArrayList<Track> = arrayListOf()
-        tempQueue.addAll(queueData.value.data.listTracks)
+        val sourceData = queueData.value.data
+        val initialCapacity =
+            if (RadioQueueTrim.appliesTo(sourceData.playlistType, sourceData.playlistId)) {
+                Int.MAX_VALUE
+            } else {
+                MAX_FINITE_QUEUE_TRACKS
+            }
+        tempQueue.addAll(sourceData.listTracks.take(initialCapacity))
         val chunkedList = tempQueue.chunked(100)
         // Reset queue
         _queueData.update {
