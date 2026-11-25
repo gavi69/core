@@ -384,6 +384,12 @@ internal class CrossfadeExoPlayerAdapter(
     private var shuffleIndices = mutableListOf<Int>()
     private var shuffleOrder = mutableListOf<Int>()
 
+    // Recent track IDs let a new shuffle avoid putting songs played moments ago
+    // near the start of the queue.
+    private val recentlyPlayedMediaIds = ArrayDeque<String>()
+    private val recentShuffleHistoryLimit = 100
+    private val shuffleCandidateCount = 32
+
     // Loading management
     private var currentLoadJob: Job? = null
 
@@ -487,6 +493,7 @@ internal class CrossfadeExoPlayerAdapter(
         if (playlistIndex == localCurrentMediaItemIndex) return
         localCurrentMediaItemIndex = playlistIndex
         val item = playlist[playlistIndex]
+        rememberPlayedTrack(item)
         listeners.forEach {
             it.onMediaItemTransition(item, PlayerConstants.MEDIA_ITEM_TRANSITION_REASON_AUTO)
         }
@@ -1565,6 +1572,7 @@ internal class CrossfadeExoPlayerAdapter(
                     transitionToState(InternalState.PREPARING)
 
                     // Notify media item transition
+                    rememberPlayedTrack(mediaItem)
                     listeners.forEach {
                         it.onMediaItemTransition(
                             mediaItem,
@@ -2150,6 +2158,7 @@ internal class CrossfadeExoPlayerAdapter(
                 localCurrentMediaItemIndex = nextIndex
 
                 // Notify our custom listeners IMMEDIATELY (UI updates to new track)
+                rememberPlayedTrack(nextMediaItem)
                 listeners.forEach {
                     it.onMediaItemTransition(
                         nextMediaItem,
@@ -3047,15 +3056,25 @@ internal class CrossfadeExoPlayerAdapter(
             return
         }
 
-        val indices = playlist.indices.toMutableList()
-
         val currentIndex = localCurrentMediaItemIndex
-        if (currentIndex in indices) {
-            indices.removeAt(currentIndex)
+        val candidates = playlist.indices.filter { it != currentIndex }
+        val recentRanks = recentlyPlayedMediaIds.withIndex().associate { it.value to it.index }
+
+        // Compare several random orders and prefer the one that pushes recently played
+        // tracks farther from the start. Every candidate remains a permutation.
+        var bestOrder = candidates.shuffled()
+        var bestScore = scoreShuffleOrder(bestOrder, recentRanks)
+
+        repeat(shuffleCandidateCount - 1) {
+            val candidate = candidates.shuffled()
+            val score = scoreShuffleOrder(candidate, recentRanks)
+            if (score < bestScore) {
+                bestOrder = candidate
+                bestScore = score
+            }
         }
 
-        indices.shuffle()
-
+        val indices = bestOrder.toMutableList()
         if (currentIndex in playlist.indices) {
             indices.add(0, currentIndex)
         }
@@ -3069,7 +3088,32 @@ internal class CrossfadeExoPlayerAdapter(
             shuffleIndices[originalIndex] = shuffledPos
         }
 
-        Logger.d(TAG, "Created shuffle order: $shuffleOrder")
+        Logger.d(TAG, "Created anti-repeat shuffle order (${indices.size} tracks)")
+    }
+
+    private fun scoreShuffleOrder(
+        order: List<Int>,
+        recentRanks: Map<String, Int>,
+    ): Long {
+        var score = 0L
+        order.forEachIndexed { position, originalIndex ->
+            val mediaId = playlist.getOrNull(originalIndex)?.mediaId ?: return@forEachIndexed
+            val recentRank = recentRanks[mediaId] ?: return@forEachIndexed
+            val recencyWeight = (recentShuffleHistoryLimit - recentRank).coerceAtLeast(1)
+            val earlyPositionWeight = (order.size - position).coerceAtLeast(1)
+            score += recencyWeight.toLong() * earlyPositionWeight.toLong()
+        }
+        return score
+    }
+
+    private fun rememberPlayedTrack(mediaItem: GenericMediaItem) {
+        val mediaId = mediaItem.mediaId
+        if (mediaId.isBlank()) return
+        recentlyPlayedMediaIds.remove(mediaId)
+        recentlyPlayedMediaIds.addFirst(mediaId)
+        while (recentlyPlayedMediaIds.size > recentShuffleHistoryLimit) {
+            recentlyPlayedMediaIds.removeLast()
+        }
     }
 
     private fun clearShuffleOrder() {
